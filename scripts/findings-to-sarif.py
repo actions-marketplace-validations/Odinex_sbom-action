@@ -5,7 +5,7 @@ Pipeline step 4 (SBOM → OSV match → enrich → SARIF). Reads the enriched
 findings JSON and writes a SARIF 2.1.0 log that github/codeql-action/
 upload-sarif@v3 uploads to the repository's Security tab.
 
-Contract:
+Contract (issue #4):
 - Rule per canonical vulnerability: `id` = canonical key,
   `shortDescription` from the advisory summary, `properties` = epss,
   kev, osvIds, lockfile (first-seen; a vulnerability matched in several

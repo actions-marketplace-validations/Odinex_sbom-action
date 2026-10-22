@@ -63,9 +63,12 @@ inputs:
   upload-sarif:
     description: >-
       Upload the SARIF report to GitHub code scanning ('true'/'false').
-      Requires the consumer workflow to grant
-      `permissions: security-events: write`; with 'false' the workflow stays
-      at zero write scope.
+      Requires GitHub code scanning on your plan (free for public
+      repositories; private repositories need GitHub Team/Enterprise
+      with Code Security) and the consumer workflow to grant
+      `permissions: security-events: write` (plus `actions: read` in
+      private repositories); with 'false' the workflow stays at zero
+      write scope.
     required: false
     default: 'true'
   telemetry:
@@ -178,9 +181,12 @@ runs:
       run: python3 "${{ github.action_path }}/scripts/findings-to-sarif.py"
 
     # Code-scanning upload: needs the CONSUMER workflow to grant
-    # `permissions: security-events: write` (see README quickstart). The
-    # Action itself stays read-only; with `upload-sarif: 'false'` this
-    # step is skipped and no security-events permission is required.
+    # `permissions: security-events: write` (plus `actions: read` in
+    # private repos — see README quickstart) AND GitHub code scanning
+    # on the plan (free for public repos; private repos need GitHub
+    # Code Security). The Action itself stays read-only; with
+    # `upload-sarif: 'false'` this step is skipped and no write scope
+    # is required.
     - name: 'Upload SARIF to GitHub code scanning'
       if: inputs.upload-sarif == 'true' && inputs.scan-vulnerabilities == 'true' && steps.sarif.outputs.sarif-file != ''
       uses: github/codeql-action/upload-sarif@v3
@@ -205,7 +211,7 @@ runs:
         if-no-files-found: error
         retention-days: 90
 
-    # Opt-out usage telemetry. One schema-v1 event per run:
+    # Opt-out usage telemetry (issue #7). One schema-v1 event per run:
     # counts, lockfile types, and a salted-hash repo identity. `always()`
     # means a failed scan is still honestly counted as a 'partial' run;
     # the script is fail-open and can never fail the build. Opt out with

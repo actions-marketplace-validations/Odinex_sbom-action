@@ -36,7 +36,9 @@ steps:
   - uses: Odinex/sbom-action@v0
 ```
 
-That runs with all defaults: lockfile detection, CycloneDX SBOM generation, OSV.dev matching, EPSS/KEV enrichment, artifact uploads, and a SARIF upload to the Security tab. The SARIF upload needs the `security-events: write` permission (see the permissions block in the full example, or set `upload-sarif: 'false'` to stay at zero write scope).
+That runs with all defaults: lockfile detection, CycloneDX SBOM generation, OSV.dev matching, EPSS/KEV enrichment, artifact uploads, and a SARIF upload to the Security tab.
+
+The SARIF upload needs two things from the consumer repository: the `security-events: write` permission (plus `actions: read` in private repositories) and GitHub code scanning available on its plan — free for public repositories, but private repositories require GitHub Team/Enterprise with Code Security. If your private repository is on a personal Free/Pro plan, set `upload-sarif: 'false'`; every other step still runs and the findings are attached as a workflow artifact (details in [Code Scanning (SARIF)](#code-scanning-sarif)).
 
 ## Full example
 
@@ -49,9 +51,11 @@ on:
   schedule:
     - cron: '0 3 * * 1'  # weekly re-scan
 
-# security-events: write is needed only for the SARIF code-scanning upload.
-# To run at zero write scope instead, set `upload-sarif: 'false'` below and
-# use `permissions: {}`.
+# security-events: write is needed only for the SARIF code-scanning upload;
+# private repositories also need actions: read. To run at zero write scope
+# instead — also the right choice for private repos without GitHub Code
+# Security — set `upload-sarif: 'false'` below and use
+# `permissions: contents: read` only.
 permissions:
   contents: read
   security-events: write
@@ -124,9 +128,26 @@ When vulnerability scanning is enabled, the findings are also converted to a [SA
 permissions:
   contents: read          # the Action itself is read-only
   security-events: write  # required for the SARIF upload only
+  actions: read           # additionally required in private repositories
 ```
 
-Setting `upload-sarif: 'false'` skips the upload step entirely and keeps the workflow at zero write scope (`permissions: {}`), exactly as before this feature.
+The extra `actions: read` matters in private repositories: without it the upload is rejected with `Resource not accessible by integration` (see [github/codeql-action#2117](https://github.com/github/codeql-action/issues/2117)).
+
+**Availability**: on GitHub, code scanning — including third-party SARIF uploads — is free for **public** repositories; **private** repositories require GitHub Team or Enterprise with **Code Security** enabled ([GitHub docs](https://docs.github.com/en/code-security/concepts/code-scanning/code-scanning)). On a personal Free/Pro plan there is no setting that enables it for a private repository — the upload fails with `Code scanning is not enabled for this repository` ([GitHub docs](https://docs.github.com/en/code-security/reference/code-scanning/troubleshoot-analysis-errors/private-repository-enablement)). That is a plan limitation, not a permissions problem: no workflow change can fix it.
+
+In that case, keep the workflow read-only and skip the upload:
+
+```yaml
+permissions:
+  contents: read
+steps:
+  - uses: actions/checkout@v4
+  - uses: Odinex/sbom-action@v0
+    with:
+      upload-sarif: 'false'
+```
+
+With `upload-sarif: 'false'` the upload step is skipped and no write scope is needed, but the rest of the pipeline is unchanged: the SARIF report is still generated and validated (its path is exposed in the `sarif-file` output), and the complete enriched findings JSON is still attached to the run as the `vulnerability-findings` artifact — only the Security-tab upload is omitted.
 
 The SARIF report follows the alias-closure model of the matcher:
 
