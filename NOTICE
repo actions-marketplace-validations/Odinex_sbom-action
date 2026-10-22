@@ -1,0 +1,28 @@
+CycloneDX SBOM Generator
+Copyright 2026 Odinex
+
+This product includes software and data from third parties, used at run time:
+
+1. Syft -- Copyright Anchore, Inc. (Apache License 2.0)
+   https://github.com/anchore/syft
+   Downloaded and installed at run time from the official Anchore releases;
+   generates the CycloneDX SBOM from lockfiles. Not bundled in this repository.
+
+2. OSV.dev -- operated by Google. https://osv.dev
+   Package purls from the generated SBOM are sent to the OSV API
+   (https://api.osv.dev) for vulnerability matching. Advisory content is
+   authored by the OSV ecosystem and is surfaced with its own identifiers
+   (CVE, GHSA, PYSEC, ...).
+
+3. Exploit Prediction Scoring System (EPSS) -- Forum of Incident Response
+   and Security Teams (FIRST). https://www.first.org
+   CVE identifiers are sent to the FIRST EPSS API to retrieve exploit
+   probability scores.
+
+4. Known Exploited Vulnerabilities (KEV) catalog -- Cybersecurity and
+   Infrastructure Security Agency (CISA), U.S. Department of Homeland Security.
+   The public KEV JSON feed is downloaded once per run. No data is sent to CISA.
+
+Licensed under the Apache License, Version 2.0 (the "License"); you may not
+use this product except in compliance with the License. You may obtain a copy
+of the License at http://www.apache.org/licenses/LICENSE-2.0

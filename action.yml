@@ -1,0 +1,223 @@
+name: 'CycloneDX SBOM Generator'
+description: >-
+  CycloneDX SBOM from lockfiles via Syft; purls sent to OSV.dev (Google) for
+  vulnerability matching; EPSS/KEV; SARIF.
+author: 'Odinex'
+branding:
+  icon: 'list'
+  color: 'blue'
+
+inputs:
+  path:
+    description: 'Directory to scan, relative to the repository root.'
+    required: false
+    default: '.'
+  output:
+    description: 'Path of the CycloneDX JSON SBOM to write.'
+    required: false
+    default: 'sbom.cdx.json'
+  syft-version:
+    description: 'Pinned Syft release to install (e.g. v1.54.1). Pinning keeps SBOMs reproducible.'
+    required: false
+    default: 'v1.54.1'
+  source-name:
+    description: 'Name recorded in SBOM metadata for the scanned project (defaults to repository name).'
+    required: false
+    default: ''
+  fail-on-no-lockfile:
+    description: "Fail the workflow if no supported lockfile is found ('true'/'false')."
+    required: false
+    default: 'false'
+  upload-artifact:
+    description: "Upload the SBOM as a workflow artifact ('true'/'false')."
+    required: false
+    default: 'true'
+  scan-vulnerabilities:
+    description: "Query OSV.dev for vulnerabilities in SBOM components ('true'/'false')."
+    required: false
+    default: 'true'
+  findings-output:
+    description: 'Path of the vulnerability findings JSON to write.'
+    required: false
+    default: 'vulnerabilities.json'
+  osv-api-url:
+    description: 'OSV API base URL (override for testing or self-hosted OSV).'
+    required: false
+    default: 'https://api.osv.dev'
+  fail-on-osv-error:
+    description: "Fail the workflow if the OSV API is unreachable ('true'/'false')."
+    required: false
+    default: 'false'
+  epss-api-url:
+    description: 'EPSS API base URL (override for testing or self-hosted FIRST API).'
+    required: false
+    default: 'https://api.first.org'
+  kev-feed-url:
+    description: 'CISA KEV feed URL (override for testing or mirrors).'
+    required: false
+    default: 'https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json'
+  sarif-output:
+    description: 'Path of the SARIF 2.1.0 code-scanning report to write.'
+    required: false
+    default: 'findings.sarif'
+  upload-sarif:
+    description: >-
+      Upload the SARIF report to GitHub code scanning ('true'/'false').
+      Requires the consumer workflow to grant
+      `permissions: security-events: write`; with 'false' the workflow stays
+      at zero write scope.
+    required: false
+    default: 'true'
+  telemetry:
+    description: >-
+      Report one anonymous usage event per run to the project telemetry
+      collector (opt-out). Sends run counts and lockfile types only; no
+      repo name, no source code, no CI metadata. Set 'false' to disable.
+    required: false
+    default: 'true'
+  telemetry-url:
+    description: 'Telemetry collector base URL (override for testing or self-hosting).'
+    required: false
+    default: 'https://telemetry.databoast.com'
+
+outputs:
+  sbom-file:
+    description: 'Path to the generated CycloneDX SBOM.'
+    value: ${{ steps.generate.outputs.sbom-file }}
+  components-count:
+    description: 'Number of library components in the SBOM.'
+    value: ${{ steps.generate.outputs.components-count }}
+  lockfiles-found:
+    description: 'Comma-separated list of supported lockfiles that were detected.'
+    value: ${{ steps.generate.outputs.lockfiles-found }}
+  vulnerabilities-found:
+    description: 'Number of unique vulnerabilities matched, counted by canonical key (all aliases of one CVE count once).'
+    value: ${{ steps.vuln-scan.outputs.vulnerabilities-found }}
+  findings-file:
+    description: 'Path to the generated vulnerability findings JSON.'
+    value: ${{ steps.vuln-scan.outputs.findings-file }}
+  components-with-vulns:
+    description: 'Number of components with at least one vulnerability.'
+    value: ${{ steps.vuln-scan.outputs.components-with-vulns }}
+  scan-status:
+    description: 'Scan completeness: complete or partial.'
+    value: ${{ steps.vuln-scan.outputs.scan-status }}
+  kev-count:
+    description: 'Number of findings listed in the CISA KEV catalog.'
+    value: ${{ steps.vuln-enrich.outputs.kev-count }}
+  high-epss-count:
+    description: 'Number of findings with EPSS percentile >= 0.90 (90th percentile).'
+    value: ${{ steps.vuln-enrich.outputs.high-epss-count }}
+  sarif-file:
+    description: 'Path to the generated SARIF 2.1.0 code-scanning report.'
+    value: ${{ steps.sarif.outputs.sarif-file }}
+  sarif-results:
+    description: 'Number of results in the generated SARIF report.'
+    value: ${{ steps.sarif.outputs.sarif-results }}
+
+runs:
+  using: composite
+  steps:
+    - name: 'Install Syft (pinned)'
+      id: install
+      shell: bash
+      env:
+        SYFT_VERSION: ${{ inputs.syft-version }}
+      run: |
+        if ! command -v syft >/dev/null 2>&1; then
+          echo "::group::Installing Syft ${SYFT_VERSION}"
+          # install.sh resolves release tags WITH the v prefix
+          # (releases/v1.54.1 -> 200; releases/1.54.1 -> 404, exit 1),
+          # so normalize the pin: both 'v1.54.1' and '1.54.1' work.
+          SYFT_TAG="v${SYFT_VERSION#v}"
+          curl -sSfL "https://raw.githubusercontent.com/anchore/syft/main/install.sh" \
+            | sh -s -- -b "${HOME}/.local/bin" "${SYFT_TAG}"
+          echo "${HOME}/.local/bin" >> "${GITHUB_PATH}"
+          echo "::endgroup::"
+        fi
+        echo "syft-version=$(syft version -o json | jq -r '.version')" >> "${GITHUB_OUTPUT:-/dev/null}"
+
+    - name: 'Generate CycloneDX SBOM'
+      id: generate
+      shell: bash
+      env:
+        INPUT_PATH: ${{ inputs.path }}
+        INPUT_OUTPUT: ${{ inputs.output }}
+        INPUT_SOURCE_NAME: ${{ inputs.source-name }}
+        INPUT_FAIL_ON_NO_LOCKFILE: ${{ inputs.fail-on-no-lockfile }}
+      run: bash "${{ github.action_path }}/scripts/generate-sbom.sh"
+
+    - name: 'Match vulnerabilities via OSV.dev'
+      if: inputs.scan-vulnerabilities == 'true' && steps.generate.outputs.sbom-file != ''
+      id: vuln-scan
+      shell: bash
+      env:
+        INPUT_SBOM_FILE: ${{ steps.generate.outputs.sbom-file }}
+        INPUT_FINDINGS_OUTPUT: ${{ inputs.findings-output }}
+        INPUT_OSV_API_URL: ${{ inputs.osv-api-url }}
+        INPUT_FAIL_ON_OSV_ERROR: ${{ inputs.fail-on-osv-error }}
+      run: python3 "${{ github.action_path }}/scripts/match-vulnerabilities.py"
+
+    - name: 'Enrich findings with EPSS and CISA KEV'
+      if: inputs.scan-vulnerabilities == 'true' && steps.vuln-scan.outputs.findings-file != ''
+      id: vuln-enrich
+      shell: bash
+      env:
+        INPUT_FINDINGS_FILE: ${{ steps.vuln-scan.outputs.findings-file }}
+        INPUT_EPSS_API_URL: ${{ inputs.epss-api-url }}
+        INPUT_KEV_FEED_URL: ${{ inputs.kev-feed-url }}
+      run: python3 "${{ github.action_path }}/scripts/enrich-vulnerabilities.py"
+
+    - name: 'Convert findings to SARIF 2.1.0'
+      if: inputs.scan-vulnerabilities == 'true' && steps.vuln-scan.outputs.findings-file != ''
+      id: sarif
+      shell: bash
+      env:
+        INPUT_FINDINGS_FILE: ${{ steps.vuln-scan.outputs.findings-file }}
+        INPUT_SARIF_OUTPUT: ${{ inputs.sarif-output }}
+      run: python3 "${{ github.action_path }}/scripts/findings-to-sarif.py"
+
+    # Code-scanning upload: needs the CONSUMER workflow to grant
+    # `permissions: security-events: write` (see README quickstart). The
+    # Action itself stays read-only; with `upload-sarif: 'false'` this
+    # step is skipped and no security-events permission is required.
+    - name: 'Upload SARIF to GitHub code scanning'
+      if: inputs.upload-sarif == 'true' && inputs.scan-vulnerabilities == 'true' && steps.sarif.outputs.sarif-file != ''
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: ${{ steps.sarif.outputs.sarif-file }}
+
+    - name: 'Upload SBOM artifact'
+      if: inputs.upload-artifact == 'true' && steps.generate.outputs.sbom-file != ''
+      uses: actions/upload-artifact@v4
+      with:
+        name: sbom-cyclonedx
+        path: ${{ steps.generate.outputs.sbom-file }}
+        if-no-files-found: error
+        retention-days: 90
+
+    - name: 'Upload findings artifact'
+      if: inputs.upload-artifact == 'true' && inputs.scan-vulnerabilities == 'true' && steps.vuln-scan.outputs.findings-file != ''
+      uses: actions/upload-artifact@v4
+      with:
+        name: vulnerability-findings
+        path: ${{ steps.vuln-scan.outputs.findings-file }}
+        if-no-files-found: error
+        retention-days: 90
+
+    # Opt-out usage telemetry. One schema-v1 event per run:
+    # counts, lockfile types, and a salted-hash repo identity. `always()`
+    # means a failed scan is still honestly counted as a 'partial' run;
+    # the script is fail-open and can never fail the build. Opt out with
+    # `telemetry: 'false'` or the DO_NOT_TRACK env var.
+    - name: 'Report anonymous usage telemetry (opt-out)'
+      if: ${{ always() && inputs.telemetry == 'true' }}
+      shell: bash
+      env:
+        INPUT_TELEMETRY_URL: ${{ inputs.telemetry-url }}
+        INPUT_COMPONENTS_COUNT: ${{ steps.generate.outputs.components-count }}
+        INPUT_FINDINGS_COUNT: ${{ steps.vuln-scan.outputs.vulnerabilities-found }}
+        INPUT_KEV_COUNT: ${{ steps.vuln-enrich.outputs.kev-count }}
+        INPUT_LOCKFILES_FOUND: ${{ steps.generate.outputs.lockfiles-found }}
+        INPUT_SCAN_STATUS: ${{ steps.vuln-scan.outputs.scan-status }}
+      run: python3 "${{ github.action_path }}/scripts/telemetry.py"
