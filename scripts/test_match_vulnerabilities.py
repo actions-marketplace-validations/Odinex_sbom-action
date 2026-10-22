@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Fixture tests for match-vulnerabilities.py — locks down the
-detail-fetch contract added in the issue #5 review follow-ups:
+detail-fetch contract added in the review follow-ups:
 
 - detailsFetched marker: false when any OSV record in the alias group
   could not be retrieved (non-404 fetch failure, 404 withdrawal, parse
@@ -11,7 +11,7 @@ detail-fetch contract added in the issue #5 review follow-ups:
 - Byte-identical findings output across runs (determinism).
 
 All HTTP is mocked; no network access. Run:
-python3 sbom-action/scripts/test_match_vulnerabilities.py
+python3 scripts/test_match_vulnerabilities.py
 """
 
 import importlib.util

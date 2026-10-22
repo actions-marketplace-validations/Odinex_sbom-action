@@ -6,7 +6,7 @@ partialFingerprints, severity → level mapping (null/non-string severity
 → note, MEDIUM → warning), byte-identical output across runs, and the
 structural validator (fails loudly on every construct this tool emits).
 
-Run: python3 sbom-action/scripts/test_findings_to_sarif.py
+Run: python3 scripts/test_findings_to_sarif.py
 """
 
 import hashlib

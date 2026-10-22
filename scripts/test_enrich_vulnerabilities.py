@@ -4,7 +4,7 @@ JSON contract: epss null for CVE-less groups, kev false when the feed was
 fetched, kev null when it was not, EPSS threshold on the 0-1 scale, and
 the http_get retry policy (retryable statuses only).
 
-Run: python3 sbom-action/scripts/test_enrich_vulnerabilities.py
+Run: python3 scripts/test_enrich_vulnerabilities.py
 """
 
 import importlib.util

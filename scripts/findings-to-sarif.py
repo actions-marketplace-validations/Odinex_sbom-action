@@ -54,7 +54,7 @@ SARIF_SCHEMA_URI = (
     "sarif-schema-2.1.0.json"
 )
 TOOL_NAME = "CycloneDX SBOM Generator"
-TOOL_INFORMATION_URI = "https://github.com/Odinex/c"
+TOOL_INFORMATION_URI = "https://github.com/Odinex/sbom-action"
 FINGERPRINT_KEY = "sbomActionVuln/v1"
 FINGERPRINT_SEPARATOR = "|"
 
