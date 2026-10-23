@@ -1,7 +1,7 @@
 name: 'CycloneDX SBOM Generator'
 description: >-
-  CycloneDX SBOM from lockfiles via Syft; purls sent to OSV.dev (Google) for
-  vulnerability matching; EPSS/KEV; local-only reachability annotation; SARIF.
+  CycloneDX SBOM from lockfiles via Syft; OSV.dev vulnerability matching;
+  EPSS/KEV; local-only reachability annotation; SARIF.
 author: 'Odinex'
 branding:
   icon: 'list'
