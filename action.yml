@@ -1,7 +1,7 @@
 name: 'CycloneDX SBOM Generator'
 description: >-
   CycloneDX SBOM from lockfiles via Syft; purls sent to OSV.dev (Google) for
-  vulnerability matching; EPSS/KEV; SARIF.
+  vulnerability matching; EPSS/KEV; local-only reachability annotation; SARIF.
 author: 'Odinex'
 branding:
   icon: 'list'
@@ -56,6 +56,14 @@ inputs:
     description: 'CISA KEV feed URL (override for testing or mirrors).'
     required: false
     default: 'https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json'
+  assess-reachability:
+    description: >-
+      Annotate each finding with import-level reachability (imported /
+      not-imported / unknown) by parsing source imports locally on the
+      runner ('true'/'false'). Annotation only — findings are never
+      removed, suppressed, or downgraded.
+    required: false
+    default: 'true'
   sarif-output:
     description: 'Path of the SARIF 2.1.0 code-scanning report to write.'
     required: false
@@ -111,6 +119,15 @@ outputs:
   high-epss-count:
     description: 'Number of findings with EPSS percentile >= 0.90 (90th percentile).'
     value: ${{ steps.vuln-enrich.outputs.high-epss-count }}
+  reachability-imported-count:
+    description: 'Number of findings annotated reachability level "imported".'
+    value: ${{ steps.reachability.outputs.reachability-imported-count }}
+  reachability-not-imported-count:
+    description: 'Number of findings annotated reachability level "not-imported".'
+    value: ${{ steps.reachability.outputs.reachability-not-imported-count }}
+  reachability-unknown-count:
+    description: 'Number of findings annotated reachability level "unknown".'
+    value: ${{ steps.reachability.outputs.reachability-unknown-count }}
   sarif-file:
     description: 'Path to the generated SARIF 2.1.0 code-scanning report.'
     value: ${{ steps.sarif.outputs.sarif-file }}
@@ -170,6 +187,21 @@ runs:
         INPUT_EPSS_API_URL: ${{ inputs.epss-api-url }}
         INPUT_KEV_FEED_URL: ${{ inputs.kev-feed-url }}
       run: python3 "${{ github.action_path }}/scripts/enrich-vulnerabilities.py"
+
+    # Import-level reachability annotation (issue #6, pipeline step 5).
+    # Parses source imports LOCALLY on the runner — read-only, zero
+    # network calls; annotation only, never removes/suppresses/downgrades
+    # a finding. Fail-open: on any error all findings degrade to
+    # `unknown` and the build still passes.
+    - name: 'Assess reachability (import-level, v0)'
+      if: inputs.assess-reachability == 'true' && inputs.scan-vulnerabilities == 'true' && steps.vuln-scan.outputs.findings-file != ''
+      id: reachability
+      shell: bash
+      env:
+        INPUT_FINDINGS_FILE: ${{ steps.vuln-scan.outputs.findings-file }}
+        INPUT_SBOM_FILE: ${{ steps.generate.outputs.sbom-file }}
+        INPUT_SOURCE_PATH: ${{ inputs.path }}
+      run: python3 "${{ github.action_path }}/scripts/annotate-reachability.py"
 
     - name: 'Convert findings to SARIF 2.1.0'
       if: inputs.scan-vulnerabilities == 'true' && steps.vuln-scan.outputs.findings-file != ''

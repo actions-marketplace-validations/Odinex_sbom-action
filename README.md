@@ -1,6 +1,6 @@
 # CycloneDX SBOM GitHub Action
 
-A free, open-source GitHub Action that generates a [CycloneDX](https://cyclonedx.org/) JSON SBOM (Software Bill of Materials) from your project's lockfiles using [Syft](https://github.com/anchore/syft), matches components against [OSV.dev](https://osv.dev/) vulnerability advisories, enriches them with EPSS scores and CISA KEV status, and surfaces the findings in the GitHub **Security tab** via a SARIF 2.1.0 code-scanning upload. Runs on GitHub-hosted runners — no tokens required.
+A free, open-source GitHub Action that generates a [CycloneDX](https://cyclonedx.org/) JSON SBOM (Software Bill of Materials) from your project's lockfiles using [Syft](https://github.com/anchore/syft), matches components against [OSV.dev](https://osv.dev/) vulnerability advisories, enriches them with EPSS scores and CISA KEV status, annotates each finding with import-level reachability (parsed locally on the runner), and surfaces the findings in the GitHub **Security tab** via a SARIF 2.1.0 code-scanning upload. Runs on GitHub-hosted runners — no tokens required.
 
 ## Features
 
@@ -10,6 +10,7 @@ A free, open-source GitHub Action that generates a [CycloneDX](https://cyclonedx
 - **Reproducible** — pinned Syft version for consistent output across runs
 - **Vulnerability matching** — queries OSV.dev (Google-operated) for known vulnerabilities in your dependencies
 - **Prioritization** — enriches findings with EPSS scores (FIRST API) and CISA KEV status: "which findings do I look at first"
+- **Reachability annotation** — labels each finding `imported` / `not-imported` / `unknown` by parsing source imports locally on the runner (annotation only; findings are never removed, suppressed, or downgraded)
 - **Security-tab integration** — converts findings to SARIF 2.1.0 and uploads them to GitHub code scanning (opt out with `upload-sarif: 'false'`)
 - **Minimal permissions** — the Action itself is read-only + artifact upload; the code-scanning upload (the only optional write) is documented and switchable
 - **Rich outputs** — SBOM file path, component count, detected lockfiles, vulnerability counts, scan status, and SARIF stats exposed as action outputs
@@ -97,6 +98,7 @@ and, when `upload-sarif` is enabled, uploads `findings.sarif` to GitHub code sca
 | `fail-on-osv-error` | Fail the workflow if the OSV API is unreachable (`true`/`false`) | `false` |
 | `epss-api-url` | EPSS API base URL (override for testing or self-hosted FIRST API) | `https://api.first.org` |
 | `kev-feed-url` | CISA KEV feed URL (override for testing or mirrors) | CISA `known_exploited_vulnerabilities.json` |
+| `assess-reachability` | Annotate each finding with import-level reachability by parsing source imports locally (`true`/`false`); annotation only — never removes findings | `true` |
 | `sarif-output` | Path of the SARIF 2.1.0 code-scanning report to write | `findings.sarif` |
 | `upload-sarif` | Upload the SARIF report to GitHub code scanning (`true`/`false`) | `true` |
 | `telemetry` | Report one anonymous usage event per run — see [Usage Telemetry (opt-out)](#usage-telemetry-opt-out) | `true` |
@@ -115,6 +117,9 @@ and, when `upload-sarif` is enabled, uploads `findings.sarif` to GitHub code sca
 | `scan-status` | Scan completeness: `complete` or `partial` |
 | `kev-count` | Number of findings listed in the CISA KEV catalog |
 | `high-epss-count` | Number of findings with EPSS percentile >= 0.90 (90th percentile) |
+| `reachability-imported-count` | Number of findings annotated reachability level `imported` |
+| `reachability-not-imported-count` | Number of findings annotated reachability level `not-imported` |
+| `reachability-unknown-count` | Number of findings annotated reachability level `unknown` |
 | `sarif-file` | Path to the generated SARIF 2.1.0 code-scanning report |
 | `sarif-results` | Number of results in the generated SARIF report |
 
@@ -166,6 +171,7 @@ Every outbound data flow, exhaustively:
 | Vulnerability matching | [OSV.dev](https://osv.dev), operated by Google | `scan-vulnerabilities: 'true'` (default) | package purls (name + pinned version) |
 | EPSS scores | FIRST EPSS API ([api.first.org](https://api.first.org)) | after matching | CVE identifiers |
 | KEV catalog | CISA KEV feed (download only) | after matching | nothing is sent; the feed is fetched |
+| Reachability annotation | nowhere — runs entirely on the runner | after enrichment | nothing is sent; source imports are parsed locally and never leave the runner |
 | Usage telemetry | `telemetry.databoast.com` (Helsinki, EU) | `telemetry: 'true'` (default) | one anonymous event: counts, lockfile types, salted repo hash |
 | SBOM / findings / SARIF | GitHub itself | `upload-artifact` / `upload-sarif` (default) | generated reports |
 
@@ -231,6 +237,11 @@ The `vulnerabilities.json` file contains:
         "version": "2.31.0",
         "lockfile": "/requirements.txt"
       },
+      "reachability": {
+        "level": "imported",
+        "evidence": ["src/app.py"],
+        "note": "imported directly via static import"
+      },
       "vulnerabilities": [
         {
           "id": "CVE-2024-47081",
@@ -285,6 +296,7 @@ The `vulnerabilities.json` file contains:
 - **`componentsNotScannedList`**: Array of purls for components that failed to scan (batch failure, invalid purl, etc.) — for auditability.
 - **`epss`**: `{ score, percentile, date }` from the FIRST EPSS API, or `null`. `score` and `percentile` are on the FIRST API's 0–1 scale. EPSS is CVE-keyed: canonical keys that are CVEs resolve directly; a non-CVE canonical key means no CVE exists anywhere in the alias group (the matcher prefers CVEs as canonical keys), so those findings keep `epss: null` (documented, not an error).
 - **`kev`**: `{ knownExploited: true, dueDate, added }` when the vulnerability's CVE is in the CISA KEV catalog, else `{ knownExploited: false }`. Stays `null` when the KEV feed is unreachable — unknown is not the same as not exploited.
+- **`reachability`**: `{ level, evidence, note }` — import-level reachability annotation (pipeline step 5). `level` is `imported` (the package is imported by app code, directly or via a transitive chain through SBOM dependency-graph edges), `not-imported` (no import reference and no graph path, with a usable dependency graph for the ecosystem), or `unknown` (default; dynamic `import()`/`require()`/`import_module` with a non-literal argument, unmapped Python modules, unparseable source files, or a missing/unusable dependency graph). `evidence` is a sorted list of repo-relative file paths; `note` is a deterministic human-readable explanation. **Annotation only** — the field never removes, suppresses, or downgrades a finding, so the false-suppression rate is zero by construction. KEV findings carry a note stating that reachability does not affect KEV response obligations, and surface first in the step summary regardless of level.
 - **Enrichment determinism caveat**: EPSS updates daily — `epss.date` records the score's date; determinism assertions for the ground-truth dataset must use recorded fixtures (same pattern as `generatedAt`).
 - **Enrichment degradation**: EPSS/KEV source unreachable → slots stay `null` + `::warning::`; `scanStatus` is never touched (prioritization loss ≠ scan-integrity loss).
 - **`lockfile`**: Comes from `syft:location:0:path` property — full provenance. **Limitation**: only the first location is captured; Syft can emit `syft:location:1:path` etc. when a package appears in multiple lockfiles.
@@ -314,6 +326,12 @@ python3 scripts/match-vulnerabilities.py
 INPUT_FINDINGS_FILE=vulnerabilities.json \
 python3 scripts/enrich-vulnerabilities.py
 
+# Annotate findings with import-level reachability (local-only)
+INPUT_FINDINGS_FILE=vulnerabilities.json \
+INPUT_SBOM_FILE=sbom.cdx.json \
+INPUT_SOURCE_PATH=. \
+python3 scripts/annotate-reachability.py
+
 # Convert findings to SARIF 2.1.0 (upload is a separate CI concern)
 INPUT_FINDINGS_FILE=vulnerabilities.json \
 INPUT_SARIF_OUTPUT=findings.sarif \
@@ -337,11 +355,13 @@ jq '.runs[0].results | length' findings.sarif
 │   ├── generate-sbom.sh                # Lockfile detection + Syft invocation
 │   ├── match-vulnerabilities.py        # OSV.dev vulnerability matching (3-phase)
 │   ├── enrich-vulnerabilities.py       # EPSS (FIRST API) + CISA KEV enrichment
+│   ├── annotate-reachability.py        # Import-level reachability annotation (local-only)
 │   ├── findings-to-sarif.py            # SARIF 2.1.0 conversion for code scanning
 │   ├── telemetry.py                   # Opt-out usage telemetry client
 │   ├── test_telemetry.py              # fixture tests for the telemetry contract
 │   ├── test_match_vulnerabilities.py   # fixture tests for the matching contract (mocked HTTP)
 │   ├── test_enrich_vulnerabilities.py  # fixture tests for the enrichment contract
+│   ├── test_annotate_reachability.py  # fixture tests for the reachability contract
 └── test_findings_to_sarif.py          # fixture tests for the SARIF contract
 ```
 
@@ -357,8 +377,13 @@ jq '.runs[0].results | length' findings.sarif
    - **EPSS**: FIRST API batch endpoint (~100 CVEs per call) — `epss.date` recorded for determinism
    - **KEV**: single CISA feed download per run, in-memory lookup by CVE ID
    - Source unreachable → slots stay `null` + `::warning::`; `scanStatus` is never touched
-5. **Convert** — emits a SARIF 2.1.0 report (one rule per canonical vulnerability, one result per component finding, stable partial fingerprints for cross-run dedup, validated against the 2.1.0 requirements before it is written) and uploads it to code scanning when `upload-sarif` is enabled
-6. **Report** — writes findings JSON, writes a summary to the GitHub Actions job summary (findings table sorted by EPSS percentile descending, KEV rows flagged ⚠️), and uploads both SBOM and findings as artifacts
+5. **Assess** — annotates each finding with import-level reachability (separate step, local-only):
+   - Parses `import`/`require`/dynamic `import()` statements across repo source on the runner (JavaScript/TypeScript via regex, Python via the `ast` module)
+   - Maps module specifiers to packages (Python import-name ≠ dist-name cases handled: `bs4` → `beautifulsoup4`, `PIL` → `Pillow`, etc.), then walks the SBOM dependency graph for transitive chains
+   - Adds `reachability: { level, evidence, note }` per finding — `imported` / `not-imported` / `unknown`; dynamic imports with non-literal arguments, unmapped modules, unparseable files, and missing/unusable dependency graphs all degrade to `unknown` (fail-secure)
+   - **Annotation only** — no finding is ever removed, suppressed, or downgraded; KEV findings surface first in the step summary regardless of level; source never leaves the runner
+6. **Convert** — emits a SARIF 2.1.0 report (one rule per canonical vulnerability, one result per component finding, stable partial fingerprints for cross-run dedup, validated against the 2.1.0 requirements before it is written) and uploads it to code scanning when `upload-sarif` is enabled
+7. **Report** — writes findings JSON, writes a summary to the GitHub Actions job summary (findings table sorted by EPSS percentile descending, KEV rows flagged ⚠️), and uploads both SBOM and findings as artifacts
 
 Every component in the SBOM carries a `syft:location:0:path` property pointing to the exact lockfile it was derived from — full provenance for auditability.
 
@@ -374,6 +399,8 @@ Every component in the SBOM carries a `syft:location:0:path` property pointing t
 - **Explicit SARIF fingerprints** — dependency findings have no source locations, so GitHub cannot derive fingerprints; a SHA-256 over `purl|canonical key` keeps code-scanning alerts stable across runs
 - **Optional write scope** — the Action stays read-only; the code-scanning upload is the only step needing `security-events: write`, it is documented in the quickstart, and `upload-sarif: 'false'` restores zero write scope
 - **No filtering** — raw matching only; prioritization (EPSS/KEV) and relevance (reachability) are separate pipeline steps
+- **Reachability annotates only** — the step adds a `reachability` field and never removes, suppresses, or downgrades a finding, so the false-suppression rate is zero by construction; the iron rule (never downgrade a vulnerability without deterministic evidence) keeps all uncertainty at `unknown`, and function-level AST analysis stays phase-2 (OSV's machine-readable vulnerable-symbol data is Go-only; npm/PyPI coverage is near zero)
+- **Local-only reachability** — source imports are parsed on the runner with zero network calls; nothing leaves the runner in this step (see the privacy table)
 - **Opt-out telemetry, fail-open** — one anonymous event per run (counts, lockfile types, salted repo hash); `telemetry: 'false'` or `DO_NOT_TRACK` disables it; the step uses `always()` so failed runs still count honestly as `partial`, and telemetry problems can never fail the build
 
 ## License
